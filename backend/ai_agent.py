@@ -23,6 +23,7 @@ load_dotenv(find_dotenv())
 
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
+OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 
 import socket
 from urllib.parse import urlparse
@@ -89,25 +90,77 @@ def profile_dataset(df: pd.DataFrame) -> Dict[str, Any]:
         
     return profile
 
-def _clean_json_response(raw_text: str) -> str:
-    """Strips markdown code blocks (```json ... ```) from LLM responses."""
-    cleaned = raw_text.strip()
-    if "```json" in cleaned:
-        cleaned = re.sub(r"```json\s*", "", cleaned)
-        cleaned = re.sub(r"```\s*$", "", cleaned)
-    elif "```" in cleaned:
-        cleaned = re.sub(r"```\s*", "", cleaned)
-        cleaned = re.sub(r"```\s*$", "", cleaned)
-    return cleaned.strip()
+import ast
 
-def call_llm(prompt: str, system_prompt: str = "") -> Optional[str]:
+def parse_llm_json(raw_text: Optional[str]) -> Any:
+    """
+    Robust multi-tier parser that extracts valid JSON or Python literal structures
+    from raw LLM output. Handles preambles, fences, trailing commas, single quotes,
+    and partial JSON.
+    """
+    if not raw_text or not raw_text.strip():
+        return None
+        
+    text = raw_text.strip()
+    
+    # Tier 1: Extract block between markdown fences if present
+    code_match = re.search(r"```(?:json)?\s*(.*?)\s*```", text, re.DOTALL)
+    candidate = code_match.group(1).strip() if code_match else text
+    
+    # Tier 2: Extract outermost array [ ... ] or object { ... }
+    bracket_match = re.search(r"(\[.*\]|\{.*\})", candidate, re.DOTALL)
+    candidate_bracket = bracket_match.group(1).strip() if bracket_match else candidate
+    
+    # Attempt 1: Direct JSON parsing
+    try:
+        return json.loads(candidate_bracket)
+    except Exception:
+        pass
+        
+    # Attempt 2: Strip trailing commas before closing brackets
+    cleaned_commas = re.sub(r",\s*([\]\}])", r"\1", candidate_bracket)
+    try:
+        return json.loads(cleaned_commas)
+    except Exception:
+        pass
+        
+    # Attempt 3: Python AST literal_eval (handles single quotes and python booleans)
+    try:
+        return ast.literal_eval(cleaned_commas)
+    except Exception:
+        pass
+        
+    # Attempt 4: Extract all individual {...} objects
+    extracted = []
+    for m in re.finditer(r"\{[^{}]*\}", text):
+        chunk = m.group(0)
+        try:
+            extracted.append(json.loads(chunk))
+        except Exception:
+            try:
+                extracted.append(ast.literal_eval(chunk))
+            except Exception:
+                pass
+    if extracted:
+        return extracted
+        
+    return None
+
+def call_llm(
+    prompt: str,
+    system_prompt: str = "",
+    timeout: Optional[int] = None,
+    max_tokens: int = 512,
+    json_format: bool = False
+) -> Optional[str]:
     """
     Calls Ollama locally. Returns the generated response string.
-    Returns None if Ollama is unreachable.
+    Returns None if Ollama is unreachable or times out.
     """
     if not is_ollama_available():
         return None
         
+    t = timeout or OLLAMA_TIMEOUT
     endpoint = f"{OLLAMA_BASE_URL}/api/generate"
     payload = {
         "model": OLLAMA_MODEL,
@@ -115,14 +168,20 @@ def call_llm(prompt: str, system_prompt: str = "") -> Optional[str]:
         "system": system_prompt,
         "stream": False,
         "options": {
-            "temperature": 0.2
+            "temperature": 0.2,
+            "num_predict": max_tokens
         }
     }
+    if json_format:
+        payload["format"] = "json"
     
     try:
-        resp = requests.post(endpoint, json=payload, timeout=60)
+        resp = requests.post(endpoint, json=payload, timeout=t)
         if resp.status_code == 200:
             return resp.json().get("response", "")
+        return None
+    except requests.exceptions.Timeout:
+        print(f"[Warning] Ollama call timed out after {t}s. Falling back to heuristic/template engine.")
         return None
     except Exception as e:
         print(f"[Warning] Ollama call error: {e}")
@@ -205,35 +264,41 @@ Each hypothesis must use one of these exact test_method values:
 - 'correlation' (col1 = numeric column, col2 = numeric column)
 - 'chi_square' (col1 = categorical column, col2 = categorical column)
 
-Return ONLY a JSON array with this exact format:
-[
-  {{
-    "hypothesis_text": "Clear statement of the relationship",
-    "test_method": "two_sample_t_test | correlation | chi_square",
-    "col1": "exact_column_name_1",
-    "col2": "exact_column_name_2",
-    "rationale": "Brief reason why this relationship is plausible"
-  }}
-]
+Return a JSON object with a 'hypotheses' list in this exact format:
+{{
+  "hypotheses": [
+    {{
+      "hypothesis_text": "Clear statement of the relationship",
+      "test_method": "two_sample_t_test | correlation | chi_square",
+      "col1": "exact_column_name_1",
+      "col2": "exact_column_name_2",
+      "rationale": "Brief reason why this relationship is plausible"
+    }}
+  ]
+}}
 """
     
-    raw_response = call_llm(user_prompt, system_prompt=system_prompt)
+    raw_response = call_llm(user_prompt, system_prompt=system_prompt, timeout=OLLAMA_TIMEOUT, max_tokens=768, json_format=True)
     if raw_response:
-        try:
-            cleaned = _clean_json_response(raw_response)
-            parsed = json.loads(cleaned)
-            if isinstance(parsed, list) and len(parsed) > 0:
-                # Validate columns exist
-                valid_hypotheses = []
-                for h in parsed:
+        parsed = parse_llm_json(raw_response)
+        if isinstance(parsed, dict) and "hypotheses" in parsed:
+            parsed = parsed["hypotheses"]
+        elif isinstance(parsed, dict):
+            for val in parsed.values():
+                if isinstance(val, list):
+                    parsed = val
+                    break
+        
+        if isinstance(parsed, list) and len(parsed) > 0:
+            valid_hypotheses = []
+            for h in parsed:
+                if isinstance(h, dict):
                     c1, c2 = h.get("col1"), h.get("col2")
                     if c1 in df.columns and c2 in df.columns:
                         valid_hypotheses.append(h)
-                if len(valid_hypotheses) > 0:
-                    return valid_hypotheses
-        except Exception as e:
-            print(f"[Warning] Failed to parse LLM JSON: {e}. Using fallback generator.")
-            
+            if len(valid_hypotheses) > 0:
+                return valid_hypotheses
+
     # Fallback if Ollama is not active or output invalid
     return generate_hypotheses_heuristic(df, num_hypotheses=num_hypotheses)
 
@@ -272,15 +337,15 @@ Return ONLY a JSON object:
   "rationale": "Why this refined formulation is more specific"
 }}
 """
-    raw_response = call_llm(prompt, system_prompt=system_prompt)
+    raw_response = call_llm(prompt, system_prompt=system_prompt, timeout=45, max_tokens=256, json_format=True)
     if raw_response:
-        try:
-            cleaned = _clean_json_response(raw_response)
-            parsed = json.loads(cleaned)
-            if isinstance(parsed, dict) and parsed.get("col1") in df.columns and parsed.get("col2") in df.columns:
-                return parsed
-        except Exception:
-            pass
+        parsed = parse_llm_json(raw_response)
+        if isinstance(parsed, dict) and parsed.get("col1") in df.columns and parsed.get("col2") in df.columns:
+            return parsed
+        elif isinstance(parsed, list) and len(parsed) > 0 and isinstance(parsed[0], dict):
+            first = parsed[0]
+            if first.get("col1") in df.columns and first.get("col2") in df.columns:
+                return first
             
     # Fallback refinement heuristic: switch test method or inspect spearman vs pearson
     orig_method = failed_hypothesis.get("test_method", "")
@@ -316,7 +381,7 @@ Statistical Summary: {test_result.get('summary')}
 
 Write a concise 2-3 sentence plain-English explanation of this validated finding.
 """
-    explanation = call_llm(prompt, system_prompt=system_prompt)
+    explanation = call_llm(prompt, system_prompt=system_prompt, timeout=30, max_tokens=150)
     if explanation and len(explanation.strip()) > 20:
         return explanation.strip()
         
