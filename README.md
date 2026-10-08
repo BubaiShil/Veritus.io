@@ -1,191 +1,198 @@
 # 🔬 Veritus — Autonomous AI Data Scientist
-### *Automated Hypothesis Generation and Testing (AHGT) & Validation*
+### *Automated Hypothesis Generation and Testing (AHGT) & Scientific Discovery Engine*
 
-> **Statistical rigor meets Agentic AI.**  
-> Veritus is an autonomous research framework for **Automated Hypothesis Generation and Testing** (often termed *Automated Hypothesis Generation and Validation* in scientific literature). Rather than merely describing datasets or hallucinating correlations, Veritus independently formulates falsifiable scientific hypotheses, subjects them to rigorous statistical tests ($p$-values, effect sizes), refines failed theories, and publishes only statistically validated discoveries with a full audit trail.
-
----
-
-## ⚡ The Core Problem Veritus Solves
-
-Current generative AI tools (like standard ChatGPT or Claude data plugins) frequently suffer from **statistical hallucination**:
-* They generate convincing, authoritative-sounding claims about data correlations.
-* They confuse correlation with causation, ignore sample sizes, and skip hypothesis testing.
-* They lack a **self-correcting mechanism** when an initial intuition fails.
-
-**Veritus operates like a human research scientist:**
-1. **Hypothesize**: Explores data schema and distributions to identify non-obvious relationships.
-2. **Experiment**: Runs genuine statistical tests using `scipy` and `statsmodels` (Two-sample T-Tests, Pearson/Spearman correlation, Chi-Square test of independence).
-3. **Refine**: If a broad hypothesis fails ($p \ge 0.05$), the agent dissects the failure and generates a more targeted, conditional hypothesis.
-4. **Audit & Report**: Logs every test, $p$-value, effect size, and verdict into PostgreSQL, presenting a transparent reasoning trail in an interactive Streamlit UI.
+**Veritus** is an autonomous AI data analyst that ingests tabular datasets (CSV), formulates falsifiable scientific hypotheses via an LLM agent, executes rigorous frequentist statistical tests ($p$-values and effect sizes), and autonomously refines failed propositions through an iterative self-correction loop. Rather than hallucinating correlations, Veritus logs complete statistical audit trails into PostgreSQL and surfaces validated findings and rejected theories within a modern, reactive React dashboard backed by a high-performance FastAPI REST service.
 
 ---
 
-## 🔄 Agentic Architecture Loop
+## 🏛️ System Architecture
 
-```
-                     ┌───────────────────────────┐
-                     │   User Uploads CSV Data   │
-                     └─────────────┬─────────────┘
-                                   │
-                                   ▼
-                     ┌───────────────────────────┐
-                     │  AI Agent (Ollama/LLM)    │
-                     │ Proposes 5-10 Hypotheses │
-                     └─────────────┬─────────────┘
-                                   │
-                                   ▼
-                     ┌───────────────────────────┐
-                     │     Statistics Engine     │
-                     │  (t-test, chi^2, corr)    │
-                     └──────┬─────────────┬──────┘
-                            │             │
-                 Pass (p < 0.05)       Fail (p >= 0.05)
-                            │             │
-                            ▼             ▼
-              ┌──────────────────┐  ┌─────────────────────────┐
-              │ Validated Result │  │ LLM Refinement Loop     │
-              │  Explanation     │  │ (Forms targeted sub-    │
-              └────────┬─────────┘  │  hypotheses & re-tests) │
-                       │            └─────────────┬───────────┘
-                       │                          │
-                       ▼                          ▼
-       ┌────────────────────────────────────────────────────────┐
-       │   PostgreSQL Database (Audit Log & Provenance Tree)    │
-       │   - Datasets, Hypotheses, P-values, Effect Sizes       │
-       └──────────────────────────┬─────────────────────────────┘
-                                  │
-                                  ▼
-       ┌────────────────────────────────────────────────────────┐
-       │        Streamlit Frontend Interactive Dashboard        │
-       │  (Validated Findings, Rejection Graveyard, Tree View)  │
-       └────────────────────────────────────────────────────────┘
+```text
+┌────────────────────────────────────────────────────────┐
+│                   React 18 + Vite UI                   │
+│        (Dataset Preview, Live Polling, Results)        │
+└───────────────────────────┬────────────────────────────┘
+                            │ HTTP REST / JSON
+                            ▼
+┌────────────────────────────────────────────────────────┐
+│                   FastAPI Backend                      │
+│        (Pipeline Orchestration, REST Endpoints)        │
+└───────────────┬────────────────────────┬───────────────┘
+                │                        │
+       SQL / RealDictCursor     HTTP / JSON Prompts
+                │                        │
+                ▼                        ▼
+┌──────────────────────────────┐ ┌───────────────────────┐
+│     PostgreSQL Database      │ │   Ollama (Local) /    │
+│  (Datasets, Hypotheses Tree, │ │     Groq / Gemini     │
+│   Statistical Provenance)    │ │   (Hypothesis Engine) │
+└──────────────────────────────┘ └───────────────────────┘
 ```
 
 ---
 
-## 🛠️ Technology Stack ($0 Free Tier Architecture)
+## 🛠️ Technology Stack
 
-| Component | Technology | Role & Justification |
+| Layer | Technology | Role & Purpose |
 |---|---|---|
-| **Language** | Python 3.11 | High performance data science and agent scripting ecosystem |
-| **Statistical Engine** | `scipy`, `statsmodels` | Real parametric & non-parametric scientific testing |
-| **Data Processing** | `pandas`, `numpy` | In-memory data wrangling, cleaning, and slicing |
-| **Local LLM** | Ollama (`llama3` / `mistral`) | 100% free, unlimited, private offline inference |
-| **Cloud LLM (Deploy)** | Groq / Gemini Flash | Ultra-fast free-tier cloud inference for deployment |
-| **Database** | PostgreSQL 16 | Relational storage for provenance, hypotheses, and runs |
-| **Frontend** | Streamlit + Plotly | Reactive UI for file upload, metric cards, and charts |
-| **Containerization** | Docker & Docker Compose | Uniform local dev environment and production reproducibility |
+| **Frontend** | React 18, Vite | Reactive, modular component architecture with instant HMR |
+| **Styling** | Vanilla CSS (Custom Design System) | High-performance styling, responsive layouts, gradient typography, and custom status badges |
+| **Backend API** | FastAPI, Uvicorn | Async REST endpoints, background task workers, and OpenAPI docs |
+| **Statistical Engine** | `scipy`, `statsmodels` | Frequentist tests: Two-sample $t$-test, ANOVA, Mann-Whitney U, Pearson/Spearman correlation, Chi-Square |
+| **Data Processing** | `pandas`, `numpy` | Tabular data profiling, variance checks, and candidate column filtering |
+| **LLM Inference** | Ollama (`llama3`), Groq, Gemini Flash | Autonomous scientific reasoning, hypothesis formulation, refinement, and plain-English synthesis |
+| **Database** | PostgreSQL 16 | Relational audit log storing dataset runs, hypothesis lineage, $p$-values, and effect sizes |
+| **Containerization**| Docker, Docker Compose | Multi-container local orchestration (Postgres + FastAPI + React/Nginx) |
 
 ---
 
 ## 📂 Project Structure
 
-```
-Veritus-io/
-│
+```text
+ai-data-analyst/
 ├── backend/
-│   ├── __init__.py
-│   ├── main.py             # Orchestrates generation -> testing -> refinement -> DB persistence
-│   ├── db.py               # PostgreSQL connection pool & relational schema definition
-│   ├── stats_engine.py     # Rigorous hypothesis testing suite (t-test, correlation, chi2)
-│   ├── ai_agent.py         # LLM interface: hypothesis formulation, refinement, explanation
-│   └── requirements.txt    # Production Python dependencies
+│   ├── main.py                 # Core AHGT pipeline orchestrator (generate -> test -> refine)
+│   ├── db.py                   # PostgreSQL connection pool and CRUD queries
+│   ├── stats_engine.py         # Hypothesis testing engine with frequentist statistical tests
+│   ├── ai_agent.py             # LLM agent (dataset profiling, hypothesis generation, refinement)
+│   ├── api.py                  # FastAPI REST API exposing endpoints & live progress tracking
+│   └── requirements.txt        # Backend dependencies (fastapi, uvicorn, scipy, pandas, etc.)
 │
 ├── frontend/
-│   ├── __init__.py
-│   └── app.py              # Streamlit dashboard: CSV upload, visual cards, reasoning trail
+│   ├── src/
+│   │   ├── main.jsx            # React root application mount
+│   │   ├── App.jsx             # Main application layout, state coordination, and tabs
+│   │   ├── api/
+│   │   │   └── client.js       # Fetch client wrapper for FastAPI backend
+│   │   ├── components/
+│   │   │   ├── Sidebar.jsx         # Service status, CSV upload, agent sliders, and history list
+│   │   │   ├── DatasetPreview.jsx  # Interactive tabular preview with row/col/null metrics
+│   │   │   ├── RunAnalysisButton.jsx # Interactive action button with loader state
+│   │   │   ├── ProgressTracker.jsx # Live progress bar and pipeline step messages
+│   │   │   ├── ResultsTabs.jsx     # Validated vs. Rejected tabbed findings container
+│   │   │   ├── FindingCard.jsx     # Individual hypothesis cards with badges and explanations
+│   │   │   └── SystemStatusBadge.jsx # Ollama and PostgreSQL connectivity pills
+│   │   ├── styles/
+│   │   │   └── index.css       # Complete design system tokens, typography, and card themes
+│   │   └── hooks/
+│   │       └── useAnalysis.js  # Custom React hook managing analysis state & status polling
+│   ├── index.html              # HTML entry with Inter & JetBrains Mono fonts
+│   ├── nginx.conf              # Nginx reverse proxy configuration for production container
+│   ├── package.json            # Frontend dependencies and build scripts
+│   ├── vite.config.js          # Vite configuration
+│   └── .env                    # VITE_API_URL=http://localhost:8000
 │
-├── Dockerfile              # Production multi-stage container build
-├── docker-compose.yml      # Local orchestration (PostgreSQL 16 + Streamlit app)
-├── .env                    # Secrets & connection strings (Local / Supabase / Ollama)
-├── .env.example            # Environment template for local and production deployment
-├── .gitignore              # Protects secrets, cache, and DB volume data
-└── README.md               # Project documentation
+├── Dockerfile.backend          # Builds the FastAPI Python container
+├── Dockerfile.frontend         # Multi-stage build (Node build -> Nginx static serving)
+├── docker-compose.yml          # 3-tier local service orchestration (postgres + backend + frontend)
+├── .env                        # Local backend environment configuration
+├── .env.example                # Example environment file template
+└── README.md                   # Project documentation
 ```
 
 ---
 
-## 🚀 Quickstart & Usage
+## 🔄 The AHGT (Automated Hypothesis Generation and Testing) Loop
+
+Veritus operates on a continuous, self-correcting 5-step scientific loop:
+
+1. **Profile**: Computes statistical summaries of the uploaded dataset (data types, distributions, non-null counts, unique values) to identify high-signal candidate variable pairs.
+2. **Formulate**: Prompts the LLM agent to propose falsifiable scientific propositions (e.g., *"Customers in Region A spend significantly more than Region B"*), automatically mapping each to an appropriate statistical test method (t-test, ANOVA, correlation, Chi-Square).
+3. **Test**: Executes frequentist statistical calculations against the chosen columns using `scipy.stats` and `statsmodels`. Evaluates whether the test meets the significance threshold ($p < 0.05$) and extracts standardized effect sizes ($r$, Cohen's $d$, $\eta^2$, Cramér's $V$).
+4. **Refine (Self-Correction)**: If an initial broad hypothesis fails ($p \ge 0.05$), the self-correction engine feeds the failed result back into the LLM to formulate a more specific, conditional hypothesis (e.g., controlling for a third variable or segmenting the sample) and re-tests it.
+5. **Report & Lineage**: Persists parent-child hypothesis lineage and statistical metrics into PostgreSQL, generating plain-English executive explanations for validated discoveries and filing rejected hypotheses in an open audit graveyard.
+
+---
+
+## 💻 Local Development Setup
 
 ### 1. Prerequisites
-* **Python 3.11+** installed
-* **Docker Desktop** installed (for PostgreSQL container)
-* **Ollama** installed (optional for local LLM inference; [ollama.com](https://ollama.com))
+- **Docker Desktop** installed and running
+- **Ollama** installed on your host machine ([ollama.com](https://ollama.com)) with a model pulled:
+  ```bash
+  ollama pull llama3
+  # or
+  ollama pull mistral
+  ```
 
-### 2. Start PostgreSQL via Docker
-To start the database in the background:
-```bash
-docker compose up -d postgres
+### 2. Environment Configuration (`.env`)
+Create a `.env` file in the root directory (based on `.env.example`):
+```env
+# PostgreSQL Configuration (Local Docker)
+POSTGRES_USER=postgres
+POSTGRES_PASSWORD=postgres
+POSTGRES_DB=ai_data_analyst
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/ai_data_analyst
+
+# LLM Configuration (Ollama running on host)
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_MODEL=llama3
+OLLAMA_TIMEOUT=120
+
+# Optional Cloud LLM Fallbacks (for cloud deployment or if not using local Ollama)
+GROQ_API_KEY=
+GEMINI_API_KEY=
+
+# CORS Configuration
+FRONTEND_ORIGIN=http://localhost:5173
 ```
-This launches a PostgreSQL 16 container exposed at `localhost:5432` with automatic health checks and persistent volume storage in `pgdata`.
 
-### 3. Local Python Environment Setup
+### 3. Run with Docker Compose
+Start all three services (`postgres`, `backend`, `frontend`) with one command:
 ```bash
-# Create and activate virtual environment
-python -m venv venv
-
-# Windows PowerShell:
-.\venv\Scripts\Activate.ps1
-
-# Install dependencies
-pip install -r backend/requirements.txt
+docker compose up --build
 ```
 
-### 4. Running the Ollama Model Locally
-Pull and run the model of your choice:
-```bash
-ollama run llama3
-```
-
-### 5. Launch the Veritus Web Dashboard
-```bash
-streamlit run frontend/app.py
-```
-Open your browser at `http://localhost:8501`.
+### 4. Access URLs
+- **React Frontend Dashboard**: [http://localhost:5173](http://localhost:5173)
+- **FastAPI Interactive API Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+- **Backend Health Check**: [http://localhost:8000/api/health](http://localhost:8000/api/health)
 
 ---
 
-## 📊 Database Schema
+## 🌐 Production Deployment Guide
 
-```sql
--- Track uploaded datasets
-CREATE TABLE datasets (
-    id SERIAL PRIMARY KEY,
-    name TEXT NOT NULL,
-    uploaded_at TIMESTAMP DEFAULT NOW()
-);
+### 1. Database → Supabase (Free Cloud PostgreSQL)
+1. Create a free account at [supabase.com](https://supabase.com) and create a new project.
+2. In Project Settings → **Database**, locate the **Connection String** (`URI` mode).
+3. Copy the URL string (format: `postgresql://postgres:[YOUR-PASSWORD]@db.[PROJECT-REF].supabase.co:5432/postgres`).
+4. Veritus will automatically run `init_db()` upon boot and create the required `datasets` and `hypotheses` tables.
 
--- Track all hypotheses and test outcomes (full lineage tree)
-CREATE TABLE hypotheses (
-    id SERIAL PRIMARY KEY,
-    dataset_id INTEGER REFERENCES datasets(id) ON DELETE CASCADE,
-    hypothesis_text TEXT NOT NULL,
-    parent_hypothesis_id INTEGER REFERENCES hypotheses(id), -- For refined/re-tested versions
-    test_method TEXT,                                       -- 't-test' | 'correlation' | 'chi-square'
-    p_value FLOAT,
-    effect_size FLOAT,
-    verdict TEXT,                                           -- 'validated' | 'rejected'
-    explanation TEXT,
-    created_at TIMESTAMP DEFAULT NOW()
-);
-```
+### 2. Backend → Render (Docker Web Service)
+1. Push your repository to GitHub.
+2. In Render, select **New +** → **Web Service** → Connect your repository.
+3. Configure the service:
+   - **Environment**: Docker
+   - **Dockerfile Path**: `Dockerfile.backend`
+   - **Docker Context**: `.`
+4. Set Environment Variables in Render:
+   - `DATABASE_URL`: Your Supabase PostgreSQL connection string.
+   - `GROQ_API_KEY` or `GEMINI_API_KEY`: Free cloud LLM API key for hypothesis generation.
+   - `FRONTEND_ORIGIN`: Your deployed frontend URL (e.g., `https://your-app.vercel.app`).
+   - `PORT`: `8000`
 
----
-
-
-## 📚 Academic & Research Grounding (AHGT)
-
-Veritus is grounded in the emerging academic field of **Automated Hypothesis Generation and Validation (AHGV)** and Agentic Data Science:
-* **HypoGeniC / Hypogenic**: Pioneered automated hypothesis generation and validation from observational data distributions.
-* **DS-Agent, BLADE, DiscoveryBench**: Leading academic benchmarks evaluating LLMs on autonomous end-to-end data analysis workflows.
-* **OpenScientist**: Open-source autonomous scientific discovery platforms for biomedical and life-science domains.
-
-### 🌟 How Veritus Stands Apart:
-While academic systems often focus on complex domain-specific architectures or benchmark evaluation, **Veritus delivers a pragmatic, general-purpose system for everyday tabular and business datasets**. It bridges LLM reasoning with classic frequentist statistical testing (`scipy`, `statsmodels`) in an accessible, open-source web application with zero running costs ($0 stack).
+### 3. Frontend → Vercel or Netlify
+1. Import the repository into Vercel or Netlify.
+2. Configure build settings:
+   - **Root Directory**: `frontend`
+   - **Build Command**: `npm run build`
+   - **Output Directory**: `dist`
+3. Add Environment Variable:
+   - `VITE_API_URL`: Your deployed Render backend URL (e.g., `https://veritus-backend.onrender.com`).
 
 ---
-## 🎯 Verification & Evaluation Criteria
-* **Statistical Validity**: Every claimed finding strictly satisfies $p < 0.05$ with reported effect sizes (e.g., Cohen's $d$, Pearson $r$, Cramér's $V$).
-* **Falsification Transparency**: Users can view hypotheses that were rejected, preventing publication bias.
-* **Lineage Tracking**: Hierarchical parent-child linking reveals how initial failed theories evolved into validated conditional findings.
+
+## 🎓 Academic Context & Related Work
+
+> **Academic Project Note:**  
+> Veritus was engineered as a final-year undergraduate capstone project exploring the synthesis of **agentic autonomous reasoning** and **formal frequentist statistics**.
+
+Veritus builds upon and addresses gaps identified in current academic research on autonomous discovery and data science agents:
+
+- **HypoGeniC / Hypogenic** (*Park et al., 2024*): Formalized the paradigm of generating and validating hypotheses from raw observational data distributions. Veritus adopts this principle and equips it with an explicit self-correcting refinement loop.
+- **DS-Agent** (*Guo et al., 2024*): Evaluates end-to-end data science agents on iterative code and modeling benchmarks. Veritus mirrors this iterative problem-solving pattern specifically for exploratory data discovery.
+- **DiscoveryBench** (*Bhatt et al., 2024*): Assesses LLMs on hypothesis formulation against empirical data, demonstrating that unconstrained generative models regularly succumb to statistical hallucinations without deterministic testing guardrails.
+
+By enforcing rigid statistical testing ($p < 0.05$ thresholding and effect size calculation) before any claim is accepted as valid, Veritus prevents AI hallucination and demonstrates a verifiable approach to autonomous data science.

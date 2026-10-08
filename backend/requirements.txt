@@ -12,6 +12,7 @@ sqlalchemy>=2.0.0
 requests>=2.31.0
 python-dotenv>=1.0.0
 
-# Frontend & visualization
-streamlit>=1.32.0
-plotly>=5.20.0
+# API layer
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+python-multipart>=0.0.9
