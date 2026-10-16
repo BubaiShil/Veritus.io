@@ -25,6 +25,11 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "120"))
 
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash").strip()
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "").strip()
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile").strip()
+
 import socket
 from urllib.parse import urlparse
 
@@ -52,6 +57,28 @@ def is_ollama_available(force_refresh: bool = False) -> bool:
     except Exception:
         _OLLAMA_STATUS_CACHE = False
         return False
+
+def get_active_llm_provider() -> str:
+    """Returns the identifier of the active LLM engine: 'gemini', 'groq', 'ollama', or 'heuristic'."""
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip() or GEMINI_API_KEY
+    if gemini_key:
+        return "gemini"
+    groq_key = os.getenv("GROQ_API_KEY", "").strip() or GROQ_API_KEY
+    if groq_key:
+        return "groq"
+    if is_ollama_available():
+        return "ollama"
+    return "heuristic"
+
+def is_llm_available(force_refresh: bool = False) -> bool:
+    """Checks whether any LLM backend (Gemini, Groq, or local Ollama) is configured and reachable."""
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip() or GEMINI_API_KEY
+    if gemini_key:
+        return True
+    groq_key = os.getenv("GROQ_API_KEY", "").strip() or GROQ_API_KEY
+    if groq_key:
+        return True
+    return is_ollama_available(force_refresh=force_refresh)
 
 def profile_dataset(df: pd.DataFrame) -> Dict[str, Any]:
     """
@@ -146,17 +173,110 @@ def parse_llm_json(raw_text: Optional[str]) -> Any:
         
     return None
 
-def call_llm(
+def _call_gemini(
     prompt: str,
     system_prompt: str = "",
     timeout: Optional[int] = None,
     max_tokens: int = 512,
     json_format: bool = False
 ) -> Optional[str]:
-    """
-    Calls Ollama locally. Returns the generated response string.
-    Returns None if Ollama is unreachable or times out.
-    """
+    """Invokes Google Gemini via REST API."""
+    api_key = os.getenv("GEMINI_API_KEY", "").strip() or GEMINI_API_KEY
+    if not api_key:
+        return None
+
+    model = os.getenv("GEMINI_MODEL", "").strip() or GEMINI_MODEL or "gemini-1.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+
+    gen_config: Dict[str, Any] = {
+        "temperature": 0.2,
+        "maxOutputTokens": max_tokens,
+    }
+    if json_format:
+        gen_config["responseMimeType"] = "application/json"
+
+    payload: Dict[str, Any] = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": gen_config,
+    }
+    if system_prompt:
+        payload["systemInstruction"] = {
+            "parts": [{"text": system_prompt}]
+        }
+
+    t = timeout or 30
+    try:
+        resp = requests.post(url, json=payload, headers={"Content-Type": "application/json"}, timeout=t)
+        if resp.status_code == 200:
+            data = resp.json()
+            candidates = data.get("candidates", [])
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts and "text" in parts[0]:
+                    return parts[0]["text"]
+        else:
+            print(f"[Warning] Gemini API returned status {resp.status_code}: {resp.text[:200]}")
+            return None
+    except Exception as exc:
+        print(f"[Warning] Gemini API call failed: {exc}")
+        return None
+
+def _call_groq(
+    prompt: str,
+    system_prompt: str = "",
+    timeout: Optional[int] = None,
+    max_tokens: int = 512,
+    json_format: bool = False
+) -> Optional[str]:
+    """Invokes Groq Cloud API via OpenAI-compatible endpoint."""
+    api_key = os.getenv("GROQ_API_KEY", "").strip() or GROQ_API_KEY
+    if not api_key:
+        return None
+
+    model = os.getenv("GROQ_MODEL", "").strip() or GROQ_MODEL or "llama-3.1-70b-versatile"
+    url = "https://api.groq.com/openai/v1/chat/completions"
+
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": 0.2,
+        "max_tokens": max_tokens,
+    }
+    if json_format:
+        payload["response_format"] = {"type": "json_object"}
+
+    t = timeout or 30
+    try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json"
+        }
+        resp = requests.post(url, json=payload, headers=headers, timeout=t)
+        if resp.status_code == 200:
+            data = resp.json()
+            choices = data.get("choices", [])
+            if choices and "message" in choices[0]:
+                return choices[0]["message"].get("content", "")
+        else:
+            print(f"[Warning] Groq API returned status {resp.status_code}: {resp.text[:200]}")
+            return None
+    except Exception as exc:
+        print(f"[Warning] Groq API call failed: {exc}")
+        return None
+
+def _call_ollama(
+    prompt: str,
+    system_prompt: str = "",
+    timeout: Optional[int] = None,
+    max_tokens: int = 512,
+    json_format: bool = False
+) -> Optional[str]:
+    """Invokes local Ollama server."""
     if not is_ollama_available():
         return None
         
@@ -181,71 +301,195 @@ def call_llm(
             return resp.json().get("response", "")
         return None
     except requests.exceptions.Timeout:
-        print(f"[Warning] Ollama call timed out after {t}s. Falling back to heuristic/template engine.")
+        print(f"[Warning] Ollama call timed out after {t}s.")
         return None
     except Exception as e:
         print(f"[Warning] Ollama call error: {e}")
         return None
 
-def generate_hypotheses_heuristic(df: pd.DataFrame, num_hypotheses: int = 5) -> List[Dict[str, Any]]:
+def call_llm(
+    prompt: str,
+    system_prompt: str = "",
+    timeout: Optional[int] = None,
+    max_tokens: int = 512,
+    json_format: bool = False
+) -> Optional[str]:
     """
-    Statistically grounded heuristic generator used when Ollama is offline or as fallback.
-    Identifies sensible candidate column pairs based on types and variances.
+    Intelligent multi-tier LLM router:
+      1. Tries Gemini if GEMINI_API_KEY is present.
+      2. Tries Groq if GROQ_API_KEY is present.
+      3. Tries local Ollama if reachable.
+      4. Returns None (triggering statistical/heuristic fallback) if all providers are unavailable.
+    """
+    # 1. Gemini
+    gemini_key = os.getenv("GEMINI_API_KEY", "").strip() or GEMINI_API_KEY
+    if gemini_key:
+        res = _call_gemini(prompt, system_prompt=system_prompt, timeout=timeout, max_tokens=max_tokens, json_format=json_format)
+        if res:
+            return res
+
+    # 2. Groq
+    groq_key = os.getenv("GROQ_API_KEY", "").strip() or GROQ_API_KEY
+    if groq_key:
+        res = _call_groq(prompt, system_prompt=system_prompt, timeout=timeout, max_tokens=max_tokens, json_format=json_format)
+        if res:
+            return res
+
+    # 3. Ollama
+    if is_ollama_available():
+        res = _call_ollama(prompt, system_prompt=system_prompt, timeout=timeout, max_tokens=max_tokens, json_format=json_format)
+        if res:
+            return res
+
+    return None
+
+def detect_target_columns(df: pd.DataFrame) -> List[str]:
+    """
+    Identifies probable outcome or target columns based on common naming conventions
+    and column position (e.g. Progression, Target, Outcome, Class, Churn, or last column).
+    """
+    target_keywords = [
+        "target", "progression", "outcome", "label", "status", "churn",
+        "sales", "price", "revenue", "risk", "score", "disease", "class",
+        "default", "survived", "y", "response", "metric", "output"
+    ]
+    matched = []
+    for col in df.columns:
+        c_low = col.lower()
+        if any(kw == c_low or kw in c_low for kw in target_keywords):
+            matched.append(col)
+            
+    # If no obvious keyword matched and dataset has multiple columns, consider the last column
+    if not matched and len(df.columns) > 1:
+        matched.append(df.columns[-1])
+        
+    return matched
+
+def generate_hypotheses_heuristic(df: pd.DataFrame, num_hypotheses: int = 6) -> List[Dict[str, Any]]:
+    """
+    Statistically grounded heuristic generator with column diversity and target-awareness.
+    Prevents single-column anchoring (e.g. testing only 'age' vs all features) and prioritizes
+    relationships involving detected target variables.
     """
     numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c]) and df[c].nunique() > 1]
     categorical_cols = [c for c in df.columns if not pd.api.types.is_numeric_dtype(df[c]) and 2 <= df[c].nunique() <= 10]
-    
-    hypotheses = []
-    
-    # 1. Numeric vs Numeric -> Correlation
-    for i in range(len(numeric_cols)):
-        for j in range(i + 1, len(numeric_cols)):
-            c1, c2 = numeric_cols[i], numeric_cols[j]
-            hypotheses.append({
-                "hypothesis_text": f"There is a statistically significant correlation between {c1} and {c2}.",
-                "test_method": "correlation",
-                "col1": c1,
-                "col2": c2,
-                "rationale": f"Testing linear and monotonic association between continuous metrics {c1} and {c2}."
-            })
-            if len(hypotheses) >= num_hypotheses:
-                return hypotheses
-                
-    # 2. Categorical (2 groups) vs Numeric -> T-Test
+    target_cols = detect_target_columns(df)
+    primary_target = target_cols[0] if target_cols else (df.columns[-1] if len(df.columns) > 1 else None)
+
+    hypotheses: List[Dict[str, Any]] = []
+    col_usage: Dict[str, int] = {c: 0 for c in df.columns}
+    seen_pairs = set()
+
+    def add_hypothesis(c1: str, c2: str, method: str, text: str, rationale: str) -> bool:
+        pair_key = tuple(sorted([c1, c2]))
+        if pair_key in seen_pairs:
+            return False
+        hypotheses.append({
+            "hypothesis_text": text,
+            "test_method": method,
+            "col1": c1,
+            "col2": c2,
+            "rationale": rationale
+        })
+        seen_pairs.add(pair_key)
+        col_usage[c1] = col_usage.get(c1, 0) + 1
+        col_usage[c2] = col_usage.get(c2, 0) + 1
+        return True
+
+    # 1. Target vs Predictors (High-value primary research questions)
+    if primary_target:
+        if primary_target in numeric_cols:
+            # Pair target with distinct numeric predictors
+            other_nums = [c for c in numeric_cols if c != primary_target]
+            for pred in other_nums:
+                if len(hypotheses) >= num_hypotheses or col_usage.get(primary_target, 0) >= 4:
+                    break
+                add_hypothesis(
+                    c1=pred,
+                    c2=primary_target,
+                    method="correlation",
+                    text=f"There is a statistically significant correlation between {pred} and {primary_target}.",
+                    rationale=f"Testing if feature '{pred}' significantly predicts outcome variable '{primary_target}'."
+                )
+
+            # Pair target with categorical predictors (T-test)
+            for cat in categorical_cols:
+                if len(hypotheses) >= num_hypotheses or col_usage.get(primary_target, 0) >= 4:
+                    break
+                add_hypothesis(
+                    c1=cat,
+                    c2=primary_target,
+                    method="two_sample_t_test",
+                    text=f"The mean {primary_target} differs significantly across distinct {cat} categories.",
+                    rationale=f"Testing if membership in category '{cat}' influences outcome '{primary_target}'."
+                )
+
+    # 2. Categorical vs Numeric (T-Test) across diverse pairs
     for cat in categorical_cols:
         for num in numeric_cols:
-            hypotheses.append({
-                "hypothesis_text": f"The mean {num} differs significantly across distinct {cat} categories.",
-                "test_method": "two_sample_t_test",
-                "col1": cat,
-                "col2": num,
-                "rationale": f"Testing if group membership in {cat} has an effect on continuous metric {num}."
-            })
             if len(hypotheses) >= num_hypotheses:
-                return hypotheses
+                break
+            if col_usage.get(cat, 0) >= 2 or col_usage.get(num, 0) >= 2:
+                continue
+            add_hypothesis(
+                c1=cat,
+                c2=num,
+                method="two_sample_t_test",
+                text=f"The mean {num} differs significantly across distinct {cat} categories.",
+                rationale=f"Testing if group membership in '{cat}' has an effect on continuous metric '{num}'."
+            )
 
-    # 3. Categorical vs Categorical -> Chi-Square
+    # 3. Categorical vs Categorical (Chi-Square) across diverse pairs
     for i in range(len(categorical_cols)):
         for j in range(i + 1, len(categorical_cols)):
-            cat1, cat2 = categorical_cols[i], categorical_cols[j]
-            hypotheses.append({
-                "hypothesis_text": f"There is a significant statistical association between {cat1} and {cat2}.",
-                "test_method": "chi_square",
-                "col1": cat1,
-                "col2": cat2,
-                "rationale": f"Testing independence between categorical variables {cat1} and {cat2}."
-            })
             if len(hypotheses) >= num_hypotheses:
-                return hypotheses
-                
-    return hypotheses
+                break
+            cat1, cat2 = categorical_cols[i], categorical_cols[j]
+            if col_usage.get(cat1, 0) >= 2 or col_usage.get(cat2, 0) >= 2:
+                continue
+            add_hypothesis(
+                c1=cat1,
+                c2=cat2,
+                method="chi_square",
+                text=f"There is a significant statistical association between {cat1} and {cat2}.",
+                rationale=f"Testing independence between categorical attributes '{cat1}' and '{cat2}'."
+            )
+
+    # 4. Diverse Numeric vs Numeric (Correlation) using round-robin stride
+    # (Avoids pinning column 0 by stepping across the column list)
+    if len(numeric_cols) >= 2:
+        num_len = len(numeric_cols)
+        candidate_pairs = []
+        for offset in range(1, num_len):
+            for i in range(num_len):
+                j = (i + offset) % num_len
+                if i < j:
+                    candidate_pairs.append((numeric_cols[i], numeric_cols[j]))
+
+        for max_usage in (1, 2, 3, 5):
+            for c1, c2 in candidate_pairs:
+                if len(hypotheses) >= num_hypotheses:
+                    break
+                if col_usage.get(c1, 0) < max_usage and col_usage.get(c2, 0) < max_usage:
+                    add_hypothesis(
+                        c1=c1,
+                        c2=c2,
+                        method="correlation",
+                        text=f"There is a statistically significant correlation between {c1} and {c2}.",
+                        rationale=f"Testing linear or monotonic relationship between continuous variables '{c1}' and '{c2}'."
+                    )
+
+    return hypotheses[:num_hypotheses]
 
 def generate_hypotheses(df: pd.DataFrame, num_hypotheses: int = 6) -> List[Dict[str, Any]]:
     """
-    Generates 5-10 falsifiable statistical hypotheses about the dataset.
-    Uses local Ollama if available; seamlessly falls back to structural heuristics.
+    Generates diverse, falsifiable statistical hypotheses about the dataset.
+    Uses local Ollama if available; enforces strict diversity rules (no single-column pinning)
+    and falls back to structural heuristics.
     """
     profile = profile_dataset(df)
+    target_cols = detect_target_columns(df)
+    target_info = f"\nCandidate primary outcome/target variables: {target_cols}" if target_cols else ""
     
     system_prompt = (
         "You are an expert scientific researcher and data scientist specializing in "
@@ -257,13 +501,18 @@ def generate_hypotheses(df: pd.DataFrame, num_hypotheses: int = 6) -> List[Dict[
     user_prompt = f"""
 Given the following dataset schema and characteristics:
 {json.dumps(profile, indent=2)}
+{target_info}
+
+CRITICAL DIVERSITY & FORMULATION REQUIREMENTS:
+1. BROAD COLUMN DIVERSITY: Do NOT anchor on a single column (e.g. NEVER test 'age' against every feature).
+2. SPREAD FREQUENCY: No single predictor column may appear in more than 2 hypotheses across the entire generated set.
+3. OUTCOME-DRIVEN: Formulate hypotheses exploring what drives the target/outcome variable ({target_cols if target_cols else 'key variables'}), as well as distinct feature-to-feature relationships.
+4. VALID METHODS: Each hypothesis must use one of these exact test_method values:
+   - 'two_sample_t_test' (col1 = categorical group column, col2 = numeric metric column)
+   - 'correlation' (col1 = numeric column, col2 = numeric column)
+   - 'chi_square' (col1 = categorical column, col2 = categorical column)
 
 Generate {num_hypotheses} distinct, falsifiable hypotheses about relationships in this data.
-Each hypothesis must use one of these exact test_method values:
-- 'two_sample_t_test' (col1 = categorical group column, col2 = numeric metric column)
-- 'correlation' (col1 = numeric column, col2 = numeric column)
-- 'chi_square' (col1 = categorical column, col2 = categorical column)
-
 Return a JSON object with a 'hypotheses' list in this exact format:
 {{
   "hypotheses": [
@@ -272,13 +521,14 @@ Return a JSON object with a 'hypotheses' list in this exact format:
       "test_method": "two_sample_t_test | correlation | chi_square",
       "col1": "exact_column_name_1",
       "col2": "exact_column_name_2",
-      "rationale": "Brief reason why this relationship is plausible"
+      "rationale": "Brief scientific reason why this relationship is plausible"
     }}
   ]
 }}
 """
     
-    raw_response = call_llm(user_prompt, system_prompt=system_prompt, timeout=OLLAMA_TIMEOUT, max_tokens=768, json_format=True)
+    tokens_limit = max(768, num_hypotheses * 120)
+    raw_response = call_llm(user_prompt, system_prompt=system_prompt, timeout=OLLAMA_TIMEOUT, max_tokens=tokens_limit, json_format=True)
     if raw_response:
         parsed = parse_llm_json(raw_response)
         if isinstance(parsed, dict) and "hypotheses" in parsed:
@@ -290,14 +540,41 @@ Return a JSON object with a 'hypotheses' list in this exact format:
                     break
         
         if isinstance(parsed, list) and len(parsed) > 0:
-            valid_hypotheses = []
+            valid_hypotheses: List[Dict[str, Any]] = []
+            seen_pairs = set()
+            usage: Dict[str, int] = {c: 0 for c in df.columns}
+            target_set = set(target_cols)
+
             for h in parsed:
                 if isinstance(h, dict):
                     c1, c2 = h.get("col1"), h.get("col2")
-                    if c1 in df.columns and c2 in df.columns:
-                        valid_hypotheses.append(h)
-            if len(valid_hypotheses) > 0:
-                return valid_hypotheses
+                    if c1 in df.columns and c2 in df.columns and c1 != c2:
+                        pair_key = tuple(sorted([c1, c2]))
+                        if pair_key in seen_pairs:
+                            continue
+                        
+                        max_c1 = 4 if c1 in target_set else 2
+                        max_c2 = 4 if c2 in target_set else 2
+                        if usage.get(c1, 0) < max_c1 and usage.get(c2, 0) < max_c2:
+                            valid_hypotheses.append(h)
+                            seen_pairs.add(pair_key)
+                            usage[c1] = usage.get(c1, 0) + 1
+                            usage[c2] = usage.get(c2, 0) + 1
+            
+            if len(valid_hypotheses) >= num_hypotheses:
+                return valid_hypotheses[:num_hypotheses]
+            elif len(valid_hypotheses) > 0:
+                # Supplement with diverse heuristic hypotheses to reach requested count
+                supplement = generate_hypotheses_heuristic(df, num_hypotheses=num_hypotheses * 2)
+                for sup in supplement:
+                    sc1, sc2 = sup.get("col1"), sup.get("col2")
+                    spair = tuple(sorted([sc1, sc2]))
+                    if spair not in seen_pairs:
+                        valid_hypotheses.append(sup)
+                        seen_pairs.add(spair)
+                        if len(valid_hypotheses) >= num_hypotheses:
+                            break
+                return valid_hypotheses[:num_hypotheses]
 
     # Fallback if Ollama is not active or output invalid
     return generate_hypotheses_heuristic(df, num_hypotheses=num_hypotheses)

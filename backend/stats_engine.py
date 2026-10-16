@@ -221,6 +221,92 @@ def run_correlation(
         "summary": summary
     }
 
+def run_partial_correlation(
+    df: pd.DataFrame,
+    col1: str,
+    col2: str,
+    covariates: List[str],
+    method: str = "pearson",
+    alpha: float = ALPHA_DEFAULT
+) -> Dict[str, Any]:
+    """
+    Computes partial correlation between col1 and col2, controlling for one or more continuous covariates.
+    Residualizes col1 and col2 on covariates using linear least squares (OLS) and correlates the residuals.
+    Degrees of freedom: n - 2 - k (where k is number of covariates).
+    """
+    valid_covs = [c for c in covariates if c in df.columns and c not in (col1, col2)]
+    if not valid_covs:
+        return run_correlation(df, col1=col1, col2=col2, method=method, alpha=alpha)
+
+    all_cols = [col1, col2] + valid_covs
+    sub = df[all_cols].dropna()
+    for c in all_cols:
+        sub[c] = pd.to_numeric(sub[c], errors="coerce")
+    sub = sub.dropna()
+    
+    n = len(sub)
+    k = len(valid_covs)
+    if n <= k + 2:
+        return {
+            "test_method": "partial_correlation",
+            "verdict": "inconclusive",
+            "error": f"Insufficient sample size ({n}) for {k} covariates."
+        }
+        
+    # Fit OLS: regress col1 on covariates, regress col2 on covariates
+    X = np.column_stack([np.ones(n)] + [sub[c].values for c in valid_covs])
+    try:
+        b1, _, _, _ = np.linalg.lstsq(X, sub[col1].values, rcond=None)
+        resid1 = sub[col1].values - X @ b1
+        
+        b2, _, _, _ = np.linalg.lstsq(X, sub[col2].values, rcond=None)
+        resid2 = sub[col2].values - X @ b2
+        
+        r, _ = stats.pearsonr(resid1, resid2)
+        
+        dof = n - 2 - k
+        if abs(r) >= 1.0:
+            p_val = 0.0
+            t_stat = float(np.sign(r) * 999.0)
+        else:
+            t_stat = float(r * np.sqrt(dof / (1.0 - r**2)))
+            p_val = float(2.0 * (1.0 - stats.t.cdf(abs(t_stat), df=dof)))
+    except Exception as exc:
+        return {
+            "test_method": "partial_correlation",
+            "verdict": "inconclusive",
+            "error": f"Partial correlation matrix failure: {exc}"
+        }
+        
+    verdict = "validated" if p_val < alpha else "rejected"
+    cov_str = ", ".join(valid_covs)
+    abs_r = abs(r)
+    r_mag = "strong" if abs_r >= 0.5 else "moderate" if abs_r >= 0.3 else "weak" if abs_r >= 0.1 else "negligible"
+    direction = "positive" if r > 0 else "negative"
+    
+    summary = (
+        f"Partial correlation between '{col1}' and '{col2}' controlling for [{cov_str}] (n={n}, df={dof}): "
+        f"Partial r={r:.3f} ({direction}, {r_mag}), t={t_stat:.3f}, p-value={p_val:.4g}. "
+        f"Verdict: {verdict.upper()} at alpha={alpha}."
+    )
+    
+    return {
+        "test_method": "partial_correlation",
+        "col1": col1,
+        "col2": col2,
+        "covariates": valid_covs,
+        "sample_size": n,
+        "degrees_of_freedom": int(dof),
+        "test_statistic": float(t_stat),
+        "p_value": float(p_val),
+        "effect_size": float(r),
+        "effect_size_name": "Partial r",
+        "effect_magnitude": r_mag,
+        "alpha": alpha,
+        "verdict": verdict,
+        "summary": summary
+    }
+
 def run_chi_square(
     df: pd.DataFrame,
     col1: str,
@@ -287,9 +373,12 @@ def test_hypothesis(
     Universal dispatcher that takes a hypothesis test specification and executes
     the appropriate statistical procedure on the dataframe.
     """
-    test_type_clean = test_type.lower().strip()
-    
-    if "t_test" in test_type_clean or "t-test" in test_type_clean:
+    test_type_clean = str(test_type).lower().strip() if test_type else "correlation"
+
+    if kwargs.get("covariates") or "partial" in test_type_clean:
+        covs = kwargs.get("covariates") or []
+        return run_partial_correlation(df, col1=col1, col2=col2, covariates=covs, alpha=alpha)
+    elif "t_test" in test_type_clean or "t-test" in test_type_clean:
         return run_t_test(df, group_col=col1, metric_col=col2, alpha=alpha, **kwargs)
     elif "spearman" in test_type_clean:
         return run_correlation(df, col1=col1, col2=col2, method="spearman", alpha=alpha)

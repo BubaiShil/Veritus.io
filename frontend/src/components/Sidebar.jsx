@@ -109,7 +109,7 @@ export default function Sidebar({
         ) : (
           <div className="file-pill">
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', overflow: 'hidden' }}>
-              <FileSpreadsheet size={16} color="#4F46E5" style={{ flexShrink: 0 }} />
+              <FileSpreadsheet size={16} color="#18181B" style={{ flexShrink: 0 }} />
               <span
                 style={{
                   fontWeight: 600,
@@ -155,7 +155,7 @@ export default function Sidebar({
           <input
             type="range"
             min="3"
-            max="8"
+            max="12"
             step="1"
             value={numHypotheses}
             onChange={(e) => onNumHypothesesChange(Number(e.target.value))}
@@ -163,7 +163,7 @@ export default function Sidebar({
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: '#94A3B8' }}>
             <span>3</span>
-            <span>8</span>
+            <span>12</span>
           </div>
         </div>
 

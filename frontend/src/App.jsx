@@ -5,6 +5,7 @@ import DatasetPreview from './components/DatasetPreview';
 import RunAnalysisButton from './components/RunAnalysisButton';
 import ProgressTracker from './components/ProgressTracker';
 import ResultsTabs from './components/ResultsTabs';
+import AskVeritus from './components/AskVeritus';
 import { useAnalysis } from './hooks/useAnalysis';
 import { getSystemStatus, getHistory, getHistoryDetail } from './api/client';
 import { AlertTriangle, Sparkles, Brain, CheckCircle, Database } from 'lucide-react';
@@ -183,17 +184,17 @@ export default function App() {
           </div>
         )}
 
-        {/* Service Warning Banner (if Ollama or Postgres are offline) */}
+        {/* Service Warning Banner (if AI Engine or Postgres are offline) */}
         {(!systemStatus.ollama || !systemStatus.database) && !error && (
           <div className="alert-box info" style={{ background: '#FFFBEB', borderColor: '#FDE68A', color: '#92400E' }}>
             <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
             <div>
               <strong>Service Notice:</strong>{' '}
               {!systemStatus.ollama && !systemStatus.database
-                ? 'Both Ollama and PostgreSQL appear to be offline. Start Ollama and Docker to run discoveries.'
+                ? 'Both AI Engine and PostgreSQL appear to be offline. Provide GEMINI_API_KEY (or start Ollama) and start PostgreSQL to run discoveries.'
                 : !systemStatus.ollama
-                ? 'Ollama is offline. Start your local Ollama server (or configure GROQ_API_KEY) for hypothesis generation.'
-                : 'PostgreSQL is unreachable. Start the database container to persist findings and run history.'}
+                ? 'AI Engine is offline. Set GEMINI_API_KEY in .env or start your local Ollama server.'
+                : 'PostgreSQL is unreachable. Start the database to persist findings and run history.'}
             </div>
           </div>
         )}
@@ -261,6 +262,12 @@ export default function App() {
               numHypotheses={numHypotheses}
               refinementEnabled={enableRefinement}
             />
+
+            <AskVeritus
+              file={file}
+              datasetId={activeDatasetId}
+              columns={datasetPreviewData.columns}
+            />
           </>
         )}
 
@@ -276,7 +283,7 @@ export default function App() {
               <div>
                 <h2 style={{ fontSize: '1.4rem', fontWeight: 800, color: '#0F172A', margin: 0 }}>
                   Analysis Report:{' '}
-                  <span style={{ color: '#4F46E5' }}>
+                  <span style={{ color: '#18181B' }}>
                     {results.dataset_name || (file ? file.name : 'Dataset Run')}
                   </span>
                 </h2>
@@ -299,6 +306,21 @@ export default function App() {
                 + Analyze New Dataset
               </button>
             </div>
+
+            {/* Conversational Q&A and On-Demand Hypothesis Testing */}
+            <AskVeritus
+              file={file}
+              datasetId={results.dataset_id || activeDatasetId}
+              columns={
+                datasetPreviewData?.columns || [
+                  ...new Set(
+                    (results?.all_hypotheses || results?.validated || [])
+                      .flatMap((h) => [h.col1, h.col2])
+                      .filter(Boolean)
+                  ),
+                ]
+              }
+            />
 
             <ResultsTabs results={results} />
           </section>

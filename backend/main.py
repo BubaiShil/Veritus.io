@@ -62,6 +62,14 @@ def run_analysis_pipeline(
     update_progress(f"Registering dataset '{dataset_name}' in database...", 0.10)
     dataset_id = create_dataset(dataset_name)
     
+    # Cache dataframe to local disk for on-demand conversational Q&A
+    try:
+        cache_dir = project_root / "data_cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        df.to_csv(cache_dir / f"{dataset_id}.csv", index=False)
+    except Exception as exc:
+        print(f"[Warning] Failed to persist dataset cache: {exc}")
+    
     update_progress("AI Agent formulating hypotheses from schema...", 0.20)
     initial_hypotheses = generate_hypotheses(df, num_hypotheses=num_initial_hypotheses)
     

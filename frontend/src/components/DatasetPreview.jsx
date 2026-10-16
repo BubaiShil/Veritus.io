@@ -13,7 +13,7 @@ export default function DatasetPreview({ data, filename }) {
     <div className="card-panel">
       <div className="card-panel-header">
         <div className="card-panel-title">
-          <FileSpreadsheet size={20} color="#4F46E5" />
+          <FileSpreadsheet size={20} color="#18181B" />
           <span>Dataset Preview: <strong>{filename}</strong></span>
         </div>
         <span style={{ fontSize: '0.8rem', color: '#64748B' }}>

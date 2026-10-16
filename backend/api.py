@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -30,7 +30,11 @@ project_root = backend_dir.parent
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
-from backend.ai_agent import is_ollama_available
+from backend.ai_agent import (
+    is_ollama_available,
+    is_llm_available,
+    get_active_llm_provider,
+)
 from backend.db import (
     get_connection,
     get_dataset,
@@ -39,6 +43,11 @@ from backend.db import (
     list_datasets,
 )
 from backend.main import run_analysis_pipeline
+from backend.query_engine import answer_dataset_query
+
+# Cache active and historical datasets for on-demand conversational Q&A
+in_memory_dfs: Dict[int, pd.DataFrame] = {}
+last_active_df: Optional[pd.DataFrame] = None
 
 # Configure logging
 logging.basicConfig(
@@ -155,12 +164,15 @@ def health_check() -> Dict[str, Any]:
 
 
 @app.get("/api/system-status", summary="System Service Status")
-def get_system_status() -> Dict[str, bool]:
-    """Returns connectivity status for the local/remote Ollama LLM and PostgreSQL database."""
-    ollama_ok = is_ollama_available(force_refresh=True)
+def get_system_status() -> Dict[str, Any]:
+    """Returns connectivity status for LLM (Gemini, Groq, or Ollama) and PostgreSQL database."""
+    llm_ok = is_llm_available(force_refresh=True)
     db_ok = check_db_available()
+    provider = get_active_llm_provider()
     return {
-        "ollama": bool(ollama_ok),
+        "ollama": bool(llm_ok),  # Backward-compatible boolean for frontend
+        "llm": bool(llm_ok),
+        "llm_provider": provider,
         "database": bool(db_ok)
     }
 
@@ -234,6 +246,11 @@ def execute_pipeline_sync(
             enable_refinement=enable_refinement,
             progress_callback=progress_callback
         )
+        global last_active_df
+        last_active_df = df
+        if isinstance(results, dict) and "dataset_id" in results:
+            in_memory_dfs[results["dataset_id"]] = df
+
         if job_id in jobs_store:
             jobs_store[job_id]["status"] = "completed"
             jobs_store[job_id]["progress"] = 1.0
@@ -352,6 +369,68 @@ async def analyze_dataset(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Analysis pipeline execution failed: {str(exc)}"
             )
+
+
+# -----------------------------------------------------------------------------
+# Natural Language Query Endpoint ("Ask Veritus")
+# -----------------------------------------------------------------------------
+@app.post("/api/query", summary="Ask Veritus Natural Language Question")
+async def ask_veritus(
+    question: str = Form(...),
+    dataset_id: Optional[int] = Form(None),
+    file: Optional[UploadFile] = File(None)
+) -> Dict[str, Any]:
+    """
+    Answers plain-English questions about a dataset by formulating hypothesis tests,
+    executing frequentist tests on the fly, ranking features, or computing summary metrics.
+    """
+    global last_active_df
+    target_df: Optional[pd.DataFrame] = None
+    target_name = "Dataset"
+
+    # 1. Parse uploaded file if provided
+    if file:
+        try:
+            content = await file.read()
+            if content:
+                target_df = pd.read_csv(io.BytesIO(content))
+                target_name = file.filename or target_name
+                last_active_df = target_df
+        except Exception as exc:
+            logger.warning(f"Failed to parse uploaded CSV for query: {exc}")
+
+    # 2. Check memory cache or disk cache by dataset_id
+    if target_df is None and dataset_id is not None:
+        if dataset_id in in_memory_dfs:
+            target_df = in_memory_dfs[dataset_id]
+        else:
+            cache_file = project_root / "data_cache" / f"{dataset_id}.csv"
+            if cache_file.exists():
+                try:
+                    target_df = pd.read_csv(cache_file)
+                    in_memory_dfs[dataset_id] = target_df
+                except Exception as exc:
+                    logger.warning(f"Failed to read disk cache for dataset {dataset_id}: {exc}")
+
+    # 3. Fallback to last active dataset in session
+    if target_df is None and last_active_df is not None:
+        target_df = last_active_df
+
+    if target_df is None or target_df.empty:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No dataset available to query. Please upload a CSV file or analyze a dataset first."
+        )
+
+    try:
+        response = answer_dataset_query(target_df, question, dataset_name=target_name)
+        return response
+    except Exception as exc:
+        logger.error(f"Error answering dataset query: {exc}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Query execution failed: {str(exc)}"
+        )
 
 
 if __name__ == "__main__":

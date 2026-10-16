@@ -22,7 +22,7 @@ export default function ProgressTracker({ progress, message }) {
       </div>
 
       <div className="progress-status-msg">
-        <Sparkles size={14} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle', color: '#4F46E5' }} />
+        <Sparkles size={14} style={{ display: 'inline', marginRight: '6px', verticalAlign: 'middle', color: '#18181B' }} />
         {message || 'AI agent processing dataset schema and statistics...'}
       </div>
     </div>

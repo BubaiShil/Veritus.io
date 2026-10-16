@@ -19,7 +19,7 @@ export default function ResultsTabs({ results }) {
         <div className="metric-tile">
           <div className="metric-tile-label">Total Tested</div>
           <div className="metric-tile-val">
-            <Activity size={22} color="#4F46E5" />
+            <Activity size={22} color="#18181B" />
             {results.total_hypotheses ?? allHypotheses.length}
           </div>
         </div>

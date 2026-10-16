@@ -30,7 +30,7 @@ export default function SystemStatusBadge({ status, loading, onRefresh }) {
 
       <div className="status-badge-row">
         <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#475569' }}>
-          <Cpu size={14} /> AI Engine (Ollama)
+          <Cpu size={14} /> AI Engine ({status?.llm_provider === 'gemini' ? 'Gemini' : status?.llm_provider === 'groq' ? 'Groq' : 'Ollama'})
         </span>
         <span className={`status-pill ${ollamaOnline ? 'online' : 'offline'}`}>
           <span style={{ fontSize: '0.65rem' }}>{ollamaOnline ? '●' : '○'}</span>

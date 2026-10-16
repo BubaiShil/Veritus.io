@@ -110,3 +110,27 @@ export async function analyzeDataset(
     body: formData,
   });
 }
+
+/**
+ * Submits a natural language question or custom hypothesis to the Veritus query engine.
+ *
+ * @param {string} question - Plain-English research question
+ * @param {number|string|null} datasetId - Optional historical dataset ID
+ * @param {File|null} file - Optional uploaded CSV File object
+ * @returns {Promise<object>}
+ */
+export async function askDatasetQuestion(question, datasetId = null, file = null) {
+  const formData = new FormData();
+  formData.append('question', question);
+  if (datasetId) {
+    formData.append('dataset_id', String(datasetId));
+  }
+  if (file) {
+    formData.append('file', file);
+  }
+
+  return request('/api/query', {
+    method: 'POST',
+    body: formData,
+  });
+}
